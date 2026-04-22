@@ -1,68 +1,94 @@
 <?php
 $data = include 'api.php';
 
-// FILTER
-$tahun = $_GET['tahun'] ?? '';
-$kategori = $_GET['kategori'] ?? '';
+// ambil filter
+$kategori_filter = $_GET['kategori'] ?? '';
+$tahun_filter = $_GET['tahun'] ?? '';
 
-$filtered = array_filter($data, function($row) use ($tahun, $kategori) {
-    if ($tahun && $row['tahun'] != $tahun) return false;
-    if ($kategori && $row['kategori'] != $kategori) return false;
-    return true;
+// normalisasi function
+function normalize($str) {
+    return strtolower(trim($str));
+}
+
+// filter data
+$data_filtered = array_filter($data, function ($item) use ($kategori_filter, $tahun_filter) {
+    return 
+        ($kategori_filter == '' || normalize($item['kategori']) == normalize($kategori_filter)) &&
+        ($tahun_filter == '' || normalize($item['tahun']) == normalize($tahun_filter));
 });
 
-// RANKING
+// ambil kategori unik (dinamis)
+$kategori_list = array_unique(array_column($data, 'kategori'));
+sort($kategori_list);
+
+// ambil tahun unik (dinamis)
+$tahun_list = array_unique(array_column($data, 'tahun'));
+sort($tahun_list);
+
+// ranking
 $ranking = [];
-foreach ($data as $row) {
-    $d = $row['nama_kabupaten_kota'];
-    $ranking[$d] = ($ranking[$d] ?? 0) + $row['jumlah'];
+foreach ($data_filtered as $item) {
+    $daerah = $item['nama_kabupaten_kota'];
+    $ranking[$daerah] = ($ranking[$daerah] ?? 0) + $item['jumlah'];
 }
 arsort($ranking);
 
-// CHART
-$chart = [];
-foreach ($data as $row) {
-    $d = $row['nama_kabupaten_kota'];
-    $chart[$d] = ($chart[$d] ?? 0) + $row['jumlah'];
-}
+// data chart
+$chart_labels = array_keys($ranking);
+$chart_values = array_values($ranking);
 ?>
 
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Dashboard Bencana Jatim</title>
-
-    <!-- Bootstrap -->
+    <title>Dashboard Bencana</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="bg-light">
 
 <div class="container mt-4">
-
-    <h2 class="text-center mb-4">📊 Dashboard Data Bencana Jawa Timur</h2>
+    <h2 class="text-center mb-4">📊 Dashboard Bencana Jawa Timur</h2>
 
     <!-- FILTER -->
-    <div class="card p-3 mb-4 shadow">
-        <form method="GET" class="row">
+    <div class="card p-3 mb-4">
+        <form method="GET" class="row g-3">
+
             <div class="col-md-4">
-                <input type="text" name="tahun" class="form-control" placeholder="Filter Tahun (2026)">
+                <label>Kategori</label>
+                <select name="kategori" class="form-control">
+                    <option value="">Semua</option>
+                    <?php foreach ($kategori_list as $k): ?>
+                        <option value="<?= $k ?>" <?= ($kategori_filter==$k?'selected':'') ?>>
+                            <?= $k ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
+
             <div class="col-md-4">
-                <input type="text" name="kategori" class="form-control" placeholder="Filter Kategori (BANJIR)">
+                <label>Tahun</label>
+                <select name="tahun" class="form-control">
+                    <option value="">Semua</option>
+                    <?php foreach ($tahun_list as $t): ?>
+                        <option value="<?= $t ?>" <?= ($tahun_filter==$t?'selected':'') ?>>
+                            <?= $t ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
-            <div class="col-md-4">
-                <button class="btn btn-primary w-100">Filter</button>
+
+            <div class="col-md-4 d-flex align-items-end">
+                <button class="btn btn-primary me-2">Filter</button>
+                <a href="index.php" class="btn btn-secondary">Reset</a>
             </div>
+
         </form>
     </div>
 
     <!-- TABEL -->
-    <div class="card p-3 mb-4 shadow">
-        <h5>Data Bencana</h5>
-        <table class="table table-bordered table-striped">
+    <div class="card p-3 mb-4">
+        <h5>📋 Data</h5>
+        <table class="table table-bordered">
             <thead class="table-dark">
                 <tr>
                     <th>No</th>
@@ -72,56 +98,52 @@ foreach ($data as $row) {
                 </tr>
             </thead>
             <tbody>
-            <?php $no=1; foreach($filtered as $row): ?>
+                <?php $no=1; foreach ($data_filtered as $row): ?>
                 <tr>
                     <td><?= $no++ ?></td>
                     <td><?= $row['nama_kabupaten_kota'] ?></td>
-                    <td>
-                        <span class="badge bg-info text-dark">
-                            <?= $row['kategori'] ?>
-                        </span>
-                    </td>
+                    <td><?= $row['kategori'] ?></td>
                     <td><?= $row['jumlah'] ?></td>
                 </tr>
-            <?php endforeach; ?>
+                <?php endforeach; ?>
             </tbody>
         </table>
     </div>
 
-    <!-- RANKING -->
-    <div class="card p-3 mb-4 shadow">
-        <h5>🏆 Ranking Daerah Rawan Bencana</h5>
-        <ol>
-        <?php foreach($ranking as $d => $t): ?>
-            <li><b><?= $d ?></b> - <?= $t ?> kejadian</li>
-        <?php endforeach; ?>
-        </ol>
+    <!-- GRAFIK -->
+    <div class="card p-3 mb-4">
+        <h5>📊 Grafik Ranking</h5>
+        <canvas id="chart"></canvas>
     </div>
 
-    <!-- CHART -->
-    <div class="card p-3 shadow">
-        <h5>📈 Grafik Bencana</h5>
-        <canvas id="chart"></canvas>
+    <!-- RANKING -->
+    <div class="card p-3">
+        <h5>🏆 Ranking</h5>
+        <ul class="list-group">
+            <?php foreach ($ranking as $d => $j): ?>
+                <li class="list-group-item d-flex justify-content-between">
+                    <?= $d ?>
+                    <span class="badge bg-danger"><?= $j ?></span>
+                </li>
+            <?php endforeach; ?>
+        </ul>
     </div>
 
 </div>
 
-<!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
 <script>
-const data = {
-    labels: <?= json_encode(array_keys($chart)) ?>,
-    datasets: [{
-        label: 'Jumlah Bencana',
-        data: <?= json_encode(array_values($chart)) ?>,
-        borderWidth: 1
-    }]
-};
+const ctx = document.getElementById('chart');
 
-new Chart(document.getElementById('chart'), {
+new Chart(ctx, {
     type: 'bar',
-    data: data
+    data: {
+        labels: <?= json_encode($chart_labels) ?>,
+        datasets: [{
+            label: 'Jumlah Bencana',
+            data: <?= json_encode($chart_values) ?>,
+        }]
+    }
 });
 </script>
 
